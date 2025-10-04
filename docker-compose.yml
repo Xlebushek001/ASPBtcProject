@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    build:
+      context: ./ApiGateway
+      dockerfile: Dockerfile
+    ports:
+      - "5000:80"
+    depends_on:
+      - binance-service
+      - bybit-service
+      - comparison-service
+    networks:
+      - crypto-network
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+
+  binance-service:
+    build:
+      context: ./BinanceService
+      dockerfile: Dockerfile
+    ports:
+      - "5001:80"
+    networks:
+      - crypto-network
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+
+  bybit-service:
+    build:
+      context: ./BybitService
+      dockerfile: Dockerfile
+    ports:
+      - "5002:80"
+    networks:
+      - crypto-network
+    environment:
+      - ASPNETCORE_URLS=http://+:80
+      - ASPNETCORE_ENVIRONMENT=Development
+
+  comparison-service:
+    build:
+      context: ./ComparisonService
+      dockerfile: Dockerfile
+    ports:
+      - "5003:80"
+    networks:
+      - crypto-network
+    environment:
+      - ASPNETCORE_URLS=http://+:80
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - binance-service
+      - bybit-service
+
+networks:
+  crypto-network:
+    driver: bridge

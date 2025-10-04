@@ -1,0 +1,6 @@
+@BybitService_HostAddress = http://localhost:5158
+
+GET {{BybitService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
