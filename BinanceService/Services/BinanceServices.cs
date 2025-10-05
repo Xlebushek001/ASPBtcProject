@@ -8,7 +8,7 @@ namespace BinanceService.Services
     {
         private readonly HttpClient _httpClient;
         private readonly ILogger<BinanceServices> _logger;
-        private const string ApiKey = "ijWwhpqpPJ7OukY5Z3J7o0eplhYgPAC2byj5ndFiAxvBZM9MnesVYOemEvvgsDO4";
+        private const string ApiKey = "";
 
         public BinanceServices(HttpClient httpClient, ILogger<BinanceServices> logger)
         {
