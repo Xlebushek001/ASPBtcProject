@@ -1,80 +1,163 @@
 ﻿using BinanceService.Models;
+using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using System.Globalization;
 
 namespace BinanceService.Services
 {
+    public class BinanceServiceOptions
+    {
+        public string ApiKey { get; set; } = string.Empty;
+        public string BaseUrl { get; set; } = "https://api.binance.com/";
+        public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(30);
+        public int MaxRetries { get; set; } = 3;
+        public int CacheDurationSeconds { get; set; } = 2;
+    }
+
     public class BinanceServices : IBinanceService
     {
         private readonly HttpClient _httpClient;
         private readonly ILogger<BinanceServices> _logger;
-        private const string ApiKey = "ijWwhpqpPJ7OukY5Z3J7o0eplhYgPAC2byj5ndFiAxvBZM9MnesVYOemEvvgsDO4";
+        private readonly IRedisService _redisService;
+        private readonly BinanceServiceOptions _options;
 
-        public BinanceServices(HttpClient httpClient, ILogger<BinanceServices> logger)
+        // Константы для кэширования
+        private const string PriceCacheKeyPrefix = "binance:price:";
+        private const string OrderBookCacheKeyPrefix = "binance:orderbook:";
+        private const string MarketStatsCacheKeyPrefix = "binance:marketstats:";
+
+        public BinanceServices(
+            HttpClient httpClient,
+            ILogger<BinanceServices> logger,
+            IRedisService redisService,
+            IOptions<BinanceServiceOptions> options)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _redisService = redisService;
+            _options = options.Value;
 
-            _httpClient.BaseAddress = new Uri("https://api.binance.com/");
-            _httpClient.DefaultRequestHeaders.Add("X-MBX-APIKEY", ApiKey);
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
+            ConfigureHttpClient();
+        }
+
+        private void ConfigureHttpClient()
+        {
+            _httpClient.BaseAddress = new Uri(_options.BaseUrl);
+            _httpClient.DefaultRequestHeaders.Add("X-MBX-APIKEY", _options.ApiKey);
+            _httpClient.Timeout = _options.Timeout;
         }
 
         public async Task<decimal> GetPriceAsync(string symbol = "BTCUSDT")
         {
+            var cacheKey = $"{PriceCacheKeyPrefix}{symbol.ToUpper()}";
+
+            // Пытаемся получить из кэша
+            var cachedPrice = await _redisService.GetAsync<decimal?>(cacheKey);
+            if (cachedPrice.HasValue)
+            {
+                _logger.LogDebug("Price for {Symbol} retrieved from Redis cache", symbol);
+                return cachedPrice.Value;
+            }
+
             try
             {
-                _logger.LogInformation($"Получение цены для {symbol} с Binance");
+                _logger.LogInformation("Getting price for {Symbol} from Binance API", symbol);
 
-                var response = await _httpClient.GetAsync($"/api/v3/ticker/price?symbol={symbol}");
+                using var response = await _httpClient.GetAsync($"/api/v3/ticker/price?symbol={symbol}");
                 response.EnsureSuccessStatusCode();
 
                 var content = await response.Content.ReadAsStringAsync();
-                dynamic data = JsonConvert.DeserializeObject(content);
+                var data = JsonConvert.DeserializeObject<dynamic>(content);
 
-                if (decimal.TryParse(data.price.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out decimal price))
+                if (data == null)
                 {
-                    _logger.LogInformation($"Успешно получена цена для {symbol}: {price}");
-                    return price;
+                    _logger.LogWarning("Null response data for {Symbol}", symbol);
+                    return 0;
                 }
 
-                _logger.LogWarning($"Не удалось распарсить цену для {symbol}");
-                return 0;
+                if (!decimal.TryParse(data.price.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out decimal price))
+                {
+                    _logger.LogWarning("Failed to parse price for {Symbol}", symbol);
+                    return 0;
+                }
+
+                _logger.LogInformation("Successfully retrieved price for {Symbol}: {Price}", symbol, price);
+
+                // Сохраняем в Redis с TTL
+                var cacheExpiry = TimeSpan.FromSeconds(_options.CacheDurationSeconds);
+                await _redisService.SetAsync(cacheKey, price, cacheExpiry);
+
+                return price;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Ошибка при получении цены для {symbol} с Binance");
-                return 0;
+                _logger.LogError(ex, "Error getting price for {Symbol} from Binance", symbol);
+                throw new BinanceApiException($"Failed to get price for {symbol}", ex);
             }
         }
 
         public async Task<OrderBookData> GetOrderBookAsync(string symbol = "BTCUSDT", int limit = 30)
         {
+            var cacheKey = $"{OrderBookCacheKeyPrefix}{symbol.ToUpper()}:{limit}";
+
+            // Пытаемся получить из кэша
+            var cachedOrderBook = await _redisService.GetAsync<OrderBookData>(cacheKey);
+            if (cachedOrderBook != null)
+            {
+                _logger.LogDebug("Order book for {Symbol} retrieved from Redis cache", symbol);
+                return cachedOrderBook;
+            }
+
             try
             {
-                _logger.LogInformation($"Получение стакана заявок для {symbol} с лимитом {limit}");
+                _logger.LogInformation("Getting order book for {Symbol} with limit {Limit}", symbol, limit);
 
-                var response = await _httpClient.GetAsync($"/api/v3/depth?symbol={symbol}&limit={limit}");
+                // Валидация параметров
+                if (limit is < 5 or > 1000)
+                    throw new ArgumentException("Limit must be between 5 and 1000", nameof(limit));
+
+                using var response = await _httpClient.GetAsync($"/api/v3/depth?symbol={symbol}&limit={limit}");
                 response.EnsureSuccessStatusCode();
 
                 var content = await response.Content.ReadAsStringAsync();
                 var orderBook = JsonConvert.DeserializeObject<OrderBookData>(content);
 
-                _logger.LogInformation($"Успешно получен стакан заявок для {symbol}");
+                if (orderBook == null || !orderBook.IsValid())
+                {
+                    _logger.LogWarning("Invalid order book data received for {Symbol}", symbol);
+                    throw new BinanceApiException($"Invalid order book data for {symbol}");
+                }
+
+                _logger.LogInformation("Successfully retrieved order book for {Symbol}", symbol);
+
+                // Сохраняем в Redis с TTL
+                var cacheExpiry = TimeSpan.FromSeconds(_options.CacheDurationSeconds);
+                await _redisService.SetAsync(cacheKey, orderBook, cacheExpiry);
+
                 return orderBook;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Ошибка при получении стакана заявок для {symbol}");
-                return new OrderBookData();
+                _logger.LogError(ex, "Error getting order book for {Symbol}", symbol);
+                throw new BinanceApiException($"Failed to get order book for {symbol}", ex);
             }
         }
 
         public async Task<MarketStats> GetMarketStatsAsync(string symbol = "BTCUSDT")
         {
+            var cacheKey = $"{MarketStatsCacheKeyPrefix}{symbol.ToUpper()}";
+
+            // Пытаемся получить из кэша
+            var cachedStats = await _redisService.GetAsync<MarketStats>(cacheKey);
+            if (cachedStats != null)
+            {
+                _logger.LogDebug("Market stats for {Symbol} retrieved from Redis cache", symbol);
+                return cachedStats;
+            }
+
             try
             {
-                _logger.LogInformation($"Получение рыночной статистики для {symbol}");
+                _logger.LogInformation("Getting market statistics for {Symbol}", symbol);
 
                 var priceTask = GetPriceAsync(symbol);
                 var orderBookTask = GetOrderBookAsync(symbol);
@@ -84,46 +167,58 @@ namespace BinanceService.Services
                 var price = await priceTask;
                 var orderBook = await orderBookTask;
 
-                var bids = orderBook.Bids
-                    .Select(b => new OrderBookEntry
-                    {
-                        Price = decimal.Parse(b[0], CultureInfo.InvariantCulture),
-                        Quantity = decimal.Parse(b[1], CultureInfo.InvariantCulture)
-                    })
-                    .OrderByDescending(b => b.Price)
-                    .Take(5)
-                    .ToList();
+                var stats = CalculateMarketStats(symbol, price, orderBook);
+                _logger.LogInformation("Successfully calculated market statistics for {Symbol}", symbol);
 
-                var asks = orderBook.Asks
-                    .Select(a => new OrderBookEntry
-                    {
-                        Price = decimal.Parse(a[0], CultureInfo.InvariantCulture),
-                        Quantity = decimal.Parse(a[1], CultureInfo.InvariantCulture)
-                    })
-                    .OrderBy(a => a.Price)
-                    .Take(5)
-                    .ToList();
+                // Сохраняем в Redis с TTL
+                var cacheExpiry = TimeSpan.FromSeconds(_options.CacheDurationSeconds);
+                await _redisService.SetAsync(cacheKey, stats, cacheExpiry);
 
-                var stats = new MarketStats
-                {
-                    CurrentPrice = price,
-                    BestBidPrice = bids.Count > 0 ? bids[0].Price : 0,
-                    BestAskPrice = asks.Count > 0 ? asks[0].Price : 0,
-                    BidVolume = bids.Sum(b => b.Quantity * b.Price),
-                    AskVolume = asks.Sum(a => a.Quantity * a.Price),
-                    Spread = asks.Count > 0 && bids.Count > 0 ? asks[0].Price - bids[0].Price : 0,
-                    TopBids = bids,
-                    TopAsks = asks
-                };
-
-                _logger.LogInformation($"Успешно рассчитана рыночная статистика для {symbol}");
                 return stats;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Ошибка при получении рыночной статистики для {symbol}");
-                return new MarketStats();
+                _logger.LogError(ex, "Error getting market statistics for {Symbol}", symbol);
+                throw new BinanceApiException($"Failed to get market statistics for {symbol}", ex);
             }
+        }
+
+        private static MarketStats CalculateMarketStats(string symbol, decimal price, OrderBookData orderBook)
+        {
+            var bids = orderBook.Bids
+                .Select(b => new OrderBookEntry
+                {
+                    Price = decimal.Parse(b[0], CultureInfo.InvariantCulture),
+                    Quantity = decimal.Parse(b[1], CultureInfo.InvariantCulture)
+                })
+                .OrderByDescending(b => b.Price)
+                .Take(5)
+                .ToList();
+
+            var asks = orderBook.Asks
+                .Select(a => new OrderBookEntry
+                {
+                    Price = decimal.Parse(a[0], CultureInfo.InvariantCulture),
+                    Quantity = decimal.Parse(a[1], CultureInfo.InvariantCulture)
+                })
+                .OrderBy(a => a.Price)
+                .Take(5)
+                .ToList();
+
+            var bestBid = bids.Count > 0 ? bids[0].Price : 0;
+            var bestAsk = asks.Count > 0 ? asks[0].Price : 0;
+
+            return new MarketStats
+            {
+                Symbol = symbol,
+                CurrentPrice = price,
+                BestBidPrice = bestBid,
+                BestAskPrice = bestAsk,
+                BidVolume = bids.Sum(b => b.Price * b.Quantity),
+                AskVolume = asks.Sum(a => a.Price * a.Quantity),
+                TopBids = bids,
+                TopAsks = asks
+            };
         }
 
         public async Task<MarketStats> GetMarketStatsWithRetryAsync(string symbol = "BTCUSDT", int maxRetries = 3)
@@ -136,13 +231,37 @@ namespace BinanceService.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, $"Попытка {attempt} не удалась для {symbol}");
+                    _logger.LogWarning(ex, "Attempt {Attempt} failed for {Symbol}", attempt, symbol);
                     if (attempt == maxRetries) throw;
 
                     await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)));
                 }
             }
-            return new MarketStats();
+
+            throw new BinanceApiException($"All {maxRetries} attempts failed for {symbol}");
         }
+
+        // Метод для инвалидации кэша (можно вызывать при необходимости)
+        public async Task InvalidateCacheAsync(string symbol)
+        {
+            var symbolUpper = symbol.ToUpper();
+            var priceKey = $"{PriceCacheKeyPrefix}{symbolUpper}";
+            var orderBookKey = $"{OrderBookCacheKeyPrefix}{symbolUpper}:30";
+            var marketStatsKey = $"{MarketStatsCacheKeyPrefix}{symbolUpper}";
+
+            await Task.WhenAll(
+                _redisService.RemoveAsync(priceKey),
+                _redisService.RemoveAsync(orderBookKey),
+                _redisService.RemoveAsync(marketStatsKey)
+            );
+
+            _logger.LogInformation("Cache invalidated for {Symbol}", symbol);
+        }
+    }
+
+    public class BinanceApiException : Exception
+    {
+        public BinanceApiException(string message) : base(message) { }
+        public BinanceApiException(string message, Exception innerException) : base(message, innerException) { }
     }
 }
