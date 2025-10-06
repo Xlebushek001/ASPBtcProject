@@ -237,31 +237,7 @@ namespace BinanceService.Services
                     await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)));
                 }
             }
-
-            throw new BinanceApiException($"All {maxRetries} attempts failed for {symbol}");
+            return new MarketStats();
         }
-
-        // Метод для инвалидации кэша
-        public async Task InvalidateCacheAsync(string symbol)
-        {
-            var symbolUpper = symbol.ToUpper();
-            var priceKey = $"{PriceCacheKeyPrefix}{symbolUpper}";
-            var orderBookKey = $"{OrderBookCacheKeyPrefix}{symbolUpper}:30";
-            var marketStatsKey = $"{MarketStatsCacheKeyPrefix}{symbolUpper}";
-
-            await Task.WhenAll(
-                _redisService.RemoveAsync(priceKey),
-                _redisService.RemoveAsync(orderBookKey),
-                _redisService.RemoveAsync(marketStatsKey)
-            );
-
-            _logger.LogInformation("Cache invalidated for {Symbol}", symbol);
-        }
-    }
-
-    public class BinanceApiException : Exception
-    {
-        public BinanceApiException(string message) : base(message) { }
-        public BinanceApiException(string message, Exception innerException) : base(message, innerException) { }
     }
 }
