@@ -38,6 +38,7 @@ builder.Services.Configure<BinanceServiceOptions>(options =>
     options.BaseUrl = builder.Configuration["Binance:BaseUrl"] ?? "https://api.binance.com/";
     options.Timeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int>("Binance:TimeoutSeconds", 30));
     options.MaxRetries = builder.Configuration.GetValue<int>("Binance:MaxRetries", 3);
+    options.CacheDurationSeconds = builder.Configuration.GetValue<int>("Binance:CacheDurationSeconds", 2);
     options.CacheDurationSeconds = builder.Configuration.GetValue<int>("Binance:CacheDurationSeconds", 5);
 });
 

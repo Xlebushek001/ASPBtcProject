@@ -239,5 +239,11 @@ namespace BinanceService.Services
             }
             return new MarketStats();
         }
+
+        public class BinanceApiException : Exception
+        {
+            public BinanceApiException(string message) : base(message) { }
+            public BinanceApiException(string message, Exception innerException) : base(message, innerException) { }
+        }
     }
 }
