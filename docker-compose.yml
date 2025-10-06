@@ -1,60 +1,85 @@
 version: '3.8'
 
 services:
-  api-gateway:
-    build:
-      context: ./ApiGateway
-      dockerfile: Dockerfile
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis-crypto
     ports:
-      - "5000:80"
-    depends_on:
-      - binance-service
-      - bybit-service
-      - comparison-service
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     networks:
       - crypto-network
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+
+  # api-gateway:
+  #   build:
+  #     context: ./ApiGateway
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "5000:80"
+  #   depends_on:
+  #     - binance-service
+  #     - bybit-service
+  #     - comparison-service
+  #     - redis
+  #   networks:
+  #     - crypto-network
+  #   environment:
+  #     - ASPNETCORE_ENVIRONMENT=Development
+  #     - Redis__ConnectionString=redis:6379
 
   binance-service:
     build:
       context: ./BinanceService
       dockerfile: Dockerfile
+    container_name: binance-service
     ports:
       - "5001:80"
-    networks:
-      - crypto-network
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:80
-
-  bybit-service:
-    build:
-      context: ./BybitService
-      dockerfile: Dockerfile
-    ports:
-      - "5002:80"
-    networks:
-      - crypto-network
-    environment:
-      - ASPNETCORE_URLS=http://+:80
-      - ASPNETCORE_ENVIRONMENT=Development
-
-  comparison-service:
-    build:
-      context: ./ComparisonService
-      dockerfile: Dockerfile
-    ports:
-      - "5003:80"
-    networks:
-      - crypto-network
-    environment:
-      - ASPNETCORE_URLS=http://+:80
-      - ASPNETCORE_ENVIRONMENT=Development
     depends_on:
-      - binance-service
-      - bybit-service
+      - redis
+    networks:
+      - crypto-network
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - Redis__ConnectionString=redis-crypto:6379
+
+#   bybit-service:
+#     build:
+#       context: ./BybitService
+#       dockerfile: Dockerfile
+#     ports:
+#       - "5002:80"
+#     depends_on:
+#       - redis
+#     networks:
+#       - crypto-network
+#     environment:
+#       - ASPNETCORE_URLS=http://+:80
+#       - ASPNETCORE_ENVIRONMENT=Development
+#       - Redis__ConnectionString=redis:6379
+
+#   comparison-service:
+#     build:
+#       context: ./ComparisonService
+#       dockerfile: Dockerfile
+#     ports:
+#       - "5003:80"
+#     depends_on:
+#       - binance-service
+#       - bybit-service
+#       - redis
+#     networks:
+#       - crypto-network
+#     environment:
+#       - ASPNETCORE_URLS=http://+:80
+#       - ASPNETCORE_ENVIRONMENT=Development
+#       - Redis__ConnectionString=redis:6379
 
 networks:
   crypto-network:
     driver: bridge
+
+volumes:
+  redis_data:
