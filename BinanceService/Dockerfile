@@ -15,7 +15,6 @@ RUN dotnet publish "BinanceService.csproj" -c Release -o /app/publish
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-# Убедитесь, что используется только HTTP
 ENV ASPNETCORE_URLS=http://+:80
 ENV ASPNETCORE_ENVIRONMENT=Development
 ENTRYPOINT ["dotnet", "BinanceService.dll"]

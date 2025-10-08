@@ -27,7 +27,7 @@ namespace BybitService.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении цены с Bybit");
+                _logger.LogError(ex, "Ошибка при получении цены");
                 return StatusCode(500, ApiResponse<decimal>.ErrorResponse("Внутренняя ошибка сервера"));
             }
         }
@@ -44,7 +44,7 @@ namespace BybitService.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении стакана заявок с Bybit");
+                _logger.LogError(ex, "Ошибка при получении стакана заявок");
                 return StatusCode(500, ApiResponse<OrderBookData>.ErrorResponse("Внутренняя ошибка сервера"));
             }
         }
@@ -59,7 +59,7 @@ namespace BybitService.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении рыночной статистики с Bybit");
+                _logger.LogError(ex, "Ошибка при получении рыночной статистики");
                 return StatusCode(500, ApiResponse<MarketStats>.ErrorResponse("Внутренняя ошибка сервера"));
             }
         }
@@ -69,6 +69,7 @@ namespace BybitService.Controllers
         {
             try
             {
+                // Проверка, что сервис работает
                 var price = await _bybitService.GetPriceAsync("BTCUSDT");
                 return Ok(ApiResponse<string>.SuccessResponse("Сервис работает нормально"));
             }
