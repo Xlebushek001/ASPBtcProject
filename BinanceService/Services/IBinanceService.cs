@@ -8,5 +8,7 @@ namespace BinanceService.Services
         Task<OrderBookData> GetOrderBookAsync(string symbol = "BTCUSDT", int limit = 30);
         Task<MarketStats> GetMarketStatsAsync(string symbol = "BTCUSDT");
         Task<MarketStats> GetMarketStatsWithRetryAsync(string symbol = "BTCUSDT", int maxRetries = 3);
+
+        //Task InvalidateCacheAsync(string symbol);
     }
 }

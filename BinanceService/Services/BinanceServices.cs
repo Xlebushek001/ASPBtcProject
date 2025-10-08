@@ -241,7 +241,7 @@ namespace BinanceService.Services
             throw new BinanceApiException($"All {maxRetries} attempts failed for {symbol}");
         }
 
-        // Метод для инвалидации кэша (можно вызывать при необходимости)
+        // Метод для инвалидации кэша
         public async Task InvalidateCacheAsync(string symbol)
         {
             var symbolUpper = symbol.ToUpper();

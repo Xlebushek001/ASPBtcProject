@@ -1,59 +1,92 @@
 using BybitService.Services;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Настройка URL для HTTP
+// Конфигурация
+builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+builder.Configuration.AddEnvironmentVariables();
+
+// Используем только HTTP
 builder.WebHost.UseUrls("http://*:80");
 
-// Добавление сервисов в контейнер
+// Сервисы
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-// Настройка HttpClient
-builder.Services.AddHttpClient<IBybitService, BybitServices>(client =>
+builder.Services.AddSwaggerGen(c =>
 {
-    client.BaseAddress = new Uri("https://api.bybit.com/");
-    client.DefaultRequestHeaders.Add("Accept", "application/json");
-    client.Timeout = TimeSpan.FromSeconds(30);
+    c.SwaggerDoc("v1", new() { Title = "Bybit Service API", Version = "v1" });
 });
 
-// Регистрация сервисов
-builder.Services.AddScoped<IBybitService, BybitServices>();
+// Конфигурация Redis
+var redisConnectionString = builder.Configuration.GetValue<string>("Redis:ConnectionString")
+    ?? "redis-crypto:6379";
 
-// Настройка логирования
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnectionString;
+    options.InstanceName = "BybitService";
+});
+
+// Конфигурация опций Bybit
+builder.Services.Configure<BybitServiceOptions>(options =>
+{
+    options.BaseUrl = builder.Configuration["Bybit:BaseUrl"] ?? "https://api.bybit.com/";
+    options.Timeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int>("Bybit:TimeoutSeconds", 30));
+    options.MaxRetries = builder.Configuration.GetValue<int>("Bybit:MaxRetries", 3);
+    options.CacheDurationSeconds = builder.Configuration.GetValue<int>("Bybit:CacheDurationSeconds", 2);
+});
+
+// HTTP клиент
+builder.Services.AddHttpClient<IBybitService, BybitServices>()
+    .ConfigureHttpClient((serviceProvider, client) =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<BybitServiceOptions>>().Value;
+        client.BaseAddress = new Uri(options.BaseUrl);
+        client.Timeout = options.Timeout;
+    });
+
+// Сервисы приложения
+builder.Services.AddScoped<IBybitService, BybitServices>();
+builder.Services.AddScoped<IRedisService, RedisService>();
+
+// Логирование
 builder.Services.AddLogging(logging =>
 {
     logging.AddConsole();
     logging.AddDebug();
+    logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
 });
 
-// Добавление проверок здоровья
+// Health checks
 builder.Services.AddHealthChecks()
-    .AddCheck<BybitHealthCheck>("bybit-api");
+    .AddCheck<BybitHealthCheck>("bybit-api")
+    .AddRedis(redisConnectionString, name: "redis-cache");
 
 var app = builder.Build();
 
-// Настройка конвейера HTTP запросов
+// Конвейер middleware
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Bybit Service API v1");
+        c.RoutePrefix = "swagger";
+    });
 }
 
+app.UseRouting();
 app.UseAuthorization();
+
 app.MapControllers();
-
-// Конечная точка проверки здоровья
 app.MapHealthChecks("/health");
-
-// Главная страница
-app.MapGet("/", () => "Service Bybit is running! /swagger");
+app.MapGet("/", () => "Bybit Service is running! Visit /swagger for API documentation.");
 
 app.Run();
 
-// Класс проверки здоровья
+// Health check
 public class BybitHealthCheck : IHealthCheck
 {
     private readonly IBybitService _bybitService;
@@ -71,12 +104,12 @@ public class BybitHealthCheck : IHealthCheck
         {
             var price = await _bybitService.GetPriceAsync();
             return price > 0
-                ? HealthCheckResult.Healthy("API Bybit available")
-                : HealthCheckResult.Unhealthy("API Bybit returned the unacceptable price");
+                ? HealthCheckResult.Healthy("Bybit API available")
+                : HealthCheckResult.Unhealthy("Bybit API returned the unacceptable price");
         }
         catch (Exception ex)
         {
-            return HealthCheckResult.Unhealthy("API Bybit unavailable", ex);
+            return HealthCheckResult.Unhealthy("Bybit API unavailable", ex);
         }
     }
 }

@@ -2,6 +2,7 @@
 {
     public class MarketStats
     {
+        public string Symbol { get; set; } = string.Empty;
         public decimal CurrentPrice { get; set; }
         public decimal BestBidPrice { get; set; }
         public decimal BestAskPrice { get; set; }
@@ -12,6 +13,5 @@
         public List<OrderBookEntry> TopBids { get; set; } = new();
         public List<OrderBookEntry> TopAsks { get; set; } = new();
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-        public string Symbol { get; set; } = string.Empty;
     }
 }
